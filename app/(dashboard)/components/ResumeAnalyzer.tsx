@@ -6,6 +6,8 @@ import { useState, useRef } from 'react';
 interface AnalysisResults {
   score: number;
   matchPercentage: number;
+  matchScore: number;
+  atsScore?: number;
   summary: string;
   strengths: string[];
   improvements: string[];
@@ -26,9 +28,9 @@ export default function ResumeAnalyzer() {
   const [jobDescription, setJobDescription] = useState('');
 
   // UI state
-  const isAnalyzing = false;
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [results] = useState<AnalysisResults | null>(null);
+  const [results, setResults] = useState<AnalysisResults | null>(null);
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
 
   // Section expand/collapse state
@@ -38,6 +40,8 @@ export default function ResumeAnalyzer() {
     improvements: true,
     keywords: true,
   });
+
+  const displayScore = results?.matchScore ?? results?.atsScore ?? results?.score ?? 0;
 
   if (!isLoaded) {
     return (
@@ -111,12 +115,108 @@ export default function ResumeAnalyzer() {
     }
   };
 
-  // Analyze Resume - Real API Integration Placeholder
-  const handleAnalyze = async () => {
-    if (activeTab === 'upload' && !file) return;
-    if (activeTab === 'paste' && !pastedText.trim()) return;
+  // Generate a cache key from the resume + job description text
+  const getCacheKey = (resume: string, jd: string) => {
+    const combinedInput = (resume + (jd || '')).trim();
+    return `resume_analysis_${btoa(unescape(encodeURIComponent(combinedInput.slice(0, 100)))).slice(0, 32)}`;
+  };
 
-    setError('ATS Analysis API is ready for integration. Configure your backend parser route to retrieve real-time feedback.');
+  // Analyze Resume - API Integration with localStorage Caching
+  const handleAnalyze = async () => {
+    setError(null);
+    let resumeContent = '';
+
+    if (activeTab === 'upload') {
+      if (!file) {
+        setError('Please upload a resume file first.');
+        return;
+      }
+      if (file.type === 'text/plain') {
+        resumeContent = await file.text();
+      } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        // Basic fallback text extraction from PDF binary string
+        resumeContent = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const result = e.target?.result;
+            if (typeof result === 'string') {
+              const text = result.replace(/[^\x20-\x7E\n]/g, ' ');
+              resolve(text);
+            } else {
+              reject(new Error('Failed to read file as string'));
+            }
+          };
+          reader.onerror = () => reject(new Error('File reading error'));
+          reader.readAsBinaryString(file);
+        });
+      } else {
+        // Fallback for DOCX or other
+        resumeContent = await file.text();
+      }
+    } else {
+      if (!pastedText.trim()) {
+        setError('Please paste your resume text.');
+        return;
+      }
+      resumeContent = pastedText;
+    }
+
+    // 1. Check localStorage cache first
+    const cacheKey = getCacheKey(resumeContent, jobDescription);
+    try {
+      const cachedData = localStorage.getItem(cacheKey);
+      if (cachedData) {
+        setResults(JSON.parse(cachedData));
+        return;
+      }
+    } catch (e) {
+      localStorage.removeItem(cacheKey);
+    }
+
+    // 2. Execute fetch request if not cached
+    try {
+      setIsAnalyzing(true);
+      setResults(null);
+
+      const response = await fetch('/api/analyze-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeContent, jobDescription }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          setError(data.error || 'API quota limit reached. Please try again later.');
+          return;
+        }
+        throw new Error(data.error || 'Failed to analyze resume.');
+      }
+
+      const analysisResult: AnalysisResults = {
+        score: data.matchScore || 0,
+        matchPercentage: data.matchScore || 0,
+        matchScore: data.matchScore || 0,
+        summary: data.summary || '',
+        strengths: data.strengths || [],
+        improvements: data.improvements || [],
+        missingKeywords: data.missingKeywords || [],
+      };
+
+      // Save result to localStorage cache
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(analysisResult));
+      } catch (e) {
+        // localStorage might be full, silently ignore
+      }
+      setResults(analysisResult);
+    } catch (error) {
+      console.error('Error analyzing resume:', error);
+      setError(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const toggleSection = (section: keyof typeof expandedSections) => {
@@ -246,7 +346,7 @@ export default function ResumeAnalyzer() {
               Target Job Description <span className="text-gray-400 font-normal">(Optional, recommended)</span>
             </label>
             <textarea
-              placeholder="Paste the job description to calculate job match accuracy..."
+              placeholder="Paste the job description to calculate job match accuracy... or leave empty for a General Resume Audit."
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
               maxLength={5000}
@@ -309,66 +409,79 @@ export default function ResumeAnalyzer() {
           {!isAnalyzing && results && (
             <div className="space-y-6">
               {/* Score Summary Overview Card */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-                {/* Scores Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-b border-gray-100 pb-6 mb-6">
-                  {/* Overall ATS Score */}
-                  <div className="flex items-center space-x-4">
-                    <div className="relative flex items-center justify-center w-24 h-24">
-                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="40" stroke="#f1f5f9" strokeWidth="8" fill="transparent" />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="40"
-                          stroke={results.score >= 80 ? '#14b8a6' : results.score >= 60 ? '#f59e0b' : '#ef4444'}
-                          strokeWidth="8"
-                          fill="transparent"
-                          strokeDasharray="251.2"
-                          strokeDashoffset={251.2 - (251.2 * results.score) / 100}
-                          className="transition-all duration-1000 ease-out"
+              <div className="w-full bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                  
+                  {/* Left Column: ATS Score Circle Badge (3 cols) */}
+                  <div className="lg:col-span-3 flex items-center justify-center lg:justify-start gap-4">
+                    <div className="relative w-24 h-24 flex-shrink-0 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                        <path
+                          className="text-gray-200"
+                          strokeWidth="3.5"
+                          stroke="currentColor"
+                          fill="none"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                        <path
+                          className="text-amber-500 transition-all duration-1000 ease-out"
+                          strokeDasharray={`${displayScore}, 100`}
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                          stroke="currentColor"
+                          fill="none"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                         />
                       </svg>
-                      <div className="absolute flex flex-col items-center justify-center">
-                        <span className="text-2xl font-extrabold text-gray-900">{results.score}</span>
-                        <span className="text-[10px] font-bold text-gray-400">ATS SCORE</span>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span className="text-2xl font-black text-gray-900 leading-none">
+                          {displayScore}
+                        </span>
+                        <span className="text-[9px] font-bold text-gray-400 tracking-wider uppercase mt-1">
+                          ATS SCORE
+                        </span>
                       </div>
                     </div>
-                    <div>
-                      <h4 className="font-bold text-gray-900 text-lg">Overall score rating</h4>
-                      <p className="text-sm text-gray-500">
-                        {results.score >= 80
-                          ? 'Excellent compliance. Your document has superb compatibility.'
-                          : results.score >= 60
-                            ? 'Good foundation. Needs minor adjustments to reach excellence.'
-                            : 'Critical issues detected. Strongly recommend revision.'}
-                      </p>
-                    </div>
                   </div>
 
-                  {/* Job Match Score */}
-                  <div className="flex flex-col justify-center space-y-2">
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="font-bold text-gray-700">Job Description Match</span>
-                      <span className={`font-bold ${results.matchPercentage >= 80 ? 'text-teal-600' : 'text-amber-600'}`}>
-                        {results.matchPercentage}%
-                      </span>
-                    </div>
-                    <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                      <div
-                        className="h-full bg-gradient-to-r from-blue-600 to-teal-500 rounded-full transition-all duration-1000"
-                        style={{ width: `${results.matchPercentage}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      {jobDescription.trim()
-                        ? 'Calculated matching keywords from your job description target.'
-                        : 'Standard generic match score. Add job description for exact results.'}
+                  {/* Middle Column: Overall Score Rating Text (4 cols) */}
+                  <div className="lg:col-span-4 space-y-1 text-center lg:text-left">
+                    <h3 className="text-lg font-bold text-gray-900 leading-snug">
+                      Overall score rating
+                    </h3>
+                    <p className="text-xs text-gray-500 leading-relaxed line-clamp-3">
+                      {results.summary}
                     </p>
                   </div>
+
+                  {/* Right Column: Job Description Match Progress Bar (5 cols) */}
+                  <div className="lg:col-span-5 space-y-2 border-t lg:border-t-0 pt-4 lg:pt-0 border-gray-100">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-bold text-gray-900">
+                        Job Description Match
+                      </span>
+                      <span className="text-sm font-bold text-amber-600">
+                        {displayScore}%
+                      </span>
+                    </div>
+                    
+                    <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-500 via-teal-400 to-teal-500 rounded-full transition-all duration-700"
+                        style={{ width: `${displayScore}%` }}
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-gray-400 leading-normal">
+                      Standard generic match score evaluation. Add target job description for exact results.
+                    </p>
+                  </div>
+
                 </div>
+              </div>
 
                 {/* Summary Segment */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <button
