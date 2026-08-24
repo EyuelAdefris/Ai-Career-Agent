@@ -24,3 +24,74 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Clerk Custom Styling */
+.cl-card {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border-radius: 1rem;
+  animation: fadeInUp 300ms ease-in-out;
+}
+
+.cl-button-primary {
+  background: linear-gradient(135deg, #007bff 0%, #0056cc 100%);
+  box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+}
+
+.cl-button-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 123, 255, 0.4);
+}
+
+.cl-button-primary:active {
+  transform: scale(0.98);
+}
+
+.cl-divider {
+  background: linear-gradient(to right, #e5e7eb, #d1d5db, #e5e7eb);
+}
+
+.cl-form-field input:focus {
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.cl-form-field {
+  animation: fadeInUp 400ms ease-in-out backwards;
+}
+
+.cl-button {
+  transition: all 200ms ease-in-out;
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@layer utilities {
+  .animate-fadeIn {
+    animation: fadeIn 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .animate-fadeInUp {
+    animation: fadeInUp 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  .animate-slideInLeft {
+    animation: slideInLeft 300ms ease-out forwards;
+  }
+}
