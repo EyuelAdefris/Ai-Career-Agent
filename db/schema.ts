@@ -45,7 +45,9 @@ export const roadmaps = pgTable('roadmaps', {
 export const chats = pgTable('chats', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull(),
+  sessionId: text('session_id').notNull().default('default-session'),
+  title: text('title').notNull().default('New Chat'),
   message: text('message').notNull(),
-  response: text('response'),
-  createdAt: timestamp('created_at').defaultNow(),
+  response: text('response').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });

@@ -12,6 +12,7 @@ interface Message {
 
 interface ChatSession {
   id: string;
+  sessionId: string;
   title: string;
   createdAt: string;
   messages: Message[];
@@ -24,7 +25,13 @@ const SUGGESTED_PROMPTS = [
   'What are the best opportunities in my field?',
 ];
 
-// Helper functions defined outside the component to keep rendering pure
+function generateSessionId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}`;
 }
@@ -40,23 +47,28 @@ function getFormattedTime(): string {
 export default function AICoach() {
   const { user, isLoaded } = useUser();
   const [input, setInput] = useState('');
-  const isLoading = false;
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Initial chat session setup
-  const [sessions, setSessions] = useState<ChatSession[]>(() => [
-    {
-      id: 'session-1',
-      title: 'Career Strategy Session',
-      createdAt: getFormattedDate(),
-      messages: [],
-    },
-  ]);
+  // Initial chat session setup with unique sessionId
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const initialId = generateSessionId();
+    return [
+      {
+        id: initialId,
+        sessionId: initialId,
+        title: 'New Conversation',
+        createdAt: getFormattedDate(),
+        messages: [],
+      },
+    ];
+  });
 
-  const [activeSessionId, setActiveSessionId] = useState<string>('session-1');
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0].id);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+  const activeSession =
+    sessions.find((s) => s.id === activeSessionId || s.sessionId === activeSessionId) || sessions[0];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -65,6 +77,27 @@ export default function AICoach() {
   useEffect(() => {
     scrollToBottom();
   }, [activeSession?.messages, isLoading]);
+
+  // Load chat history grouped into sessions from DB on mount
+  useEffect(() => {
+    async function loadSavedChats() {
+      try {
+        const query = user?.id ? `?userId=${encodeURIComponent(user.id)}` : '';
+        const res = await fetch(`/api/chats/get${query}`);
+        const data = await res.json();
+        if (data.success && Array.isArray(data.sessions) && data.sessions.length > 0) {
+          setSessions(data.sessions);
+          setActiveSessionId(data.sessions[0].sessionId || data.sessions[0].id);
+        }
+      } catch (e) {
+        console.error('Failed to load chat history:', e);
+      }
+    }
+
+    if (isLoaded && user) {
+      loadSavedChats();
+    }
+  }, [isLoaded, user]);
 
   if (!isLoaded) {
     return (
@@ -75,41 +108,57 @@ export default function AICoach() {
   }
 
   const createNewChat = () => {
-    const newId = generateId('session');
+    const newId = generateSessionId();
     const newSession: ChatSession = {
       id: newId,
+      sessionId: newId,
       title: 'New Conversation',
       createdAt: getFormattedDate(),
       messages: [],
     };
     setSessions((prev) => [newSession, ...prev]);
     setActiveSessionId(newId);
+    setInput('');
   };
 
   const deleteSession = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (sessions.length === 1) {
+      const freshId = generateSessionId();
       setSessions([
         {
-          id: generateId('session'),
+          id: freshId,
+          sessionId: freshId,
           title: 'New Conversation',
           createdAt: getFormattedDate(),
           messages: [],
         },
       ]);
+      setActiveSessionId(freshId);
+      setInput('');
       return;
     }
 
-    const updated = sessions.filter((s) => s.id !== id);
+    const updated = sessions.filter((s) => s.id !== id && s.sessionId !== id);
     setSessions(updated);
     if (activeSessionId === id) {
-      setActiveSessionId(updated[0].id);
+      setActiveSessionId(updated[0].sessionId || updated[0].id);
     }
   };
 
-  const handleSendMessage = (textToSend?: string) => {
+  const handleSendMessage = async (textToSend?: string) => {
     const messageContent = (textToSend || input).trim();
     if (!messageContent || isLoading) return;
+
+    setInput('');
+
+    const targetSessionId = activeSession?.sessionId || activeSession?.id || activeSessionId;
+
+    // Calculate dynamic session title based on first prompt (~28 chars)
+    let sessionTitle = activeSession?.title || 'New Conversation';
+    if (!activeSession?.messages || activeSession.messages.length === 0 || activeSession.title === 'New Conversation') {
+      sessionTitle = messageContent.length > 28 ? messageContent.substring(0, 28) + '...' : messageContent;
+    }
 
     const userMessage: Message = {
       id: generateId('msg'),
@@ -118,19 +167,18 @@ export default function AICoach() {
       timestamp: getFormattedTime(),
     };
 
+    const currentHistory = (activeSession?.messages || []).map((m) => ({
+      role: m.sender === 'user' ? 'user' : 'model',
+      text: m.content,
+    }));
+
+    // Update state immediately with user message & dynamic title
     setSessions((prevSessions) =>
       prevSessions.map((session) => {
-        if (session.id === activeSessionId) {
-          const isFirstMessage = session.messages.length === 0;
-          const newTitle = isFirstMessage
-            ? messageContent.length > 28
-              ? messageContent.substring(0, 28) + '...'
-              : messageContent
-            : session.title;
-
+        if (session.id === targetSessionId || session.sessionId === targetSessionId) {
           return {
             ...session,
-            title: newTitle,
+            title: sessionTitle,
             messages: [...session.messages, userMessage],
           };
         }
@@ -138,7 +186,79 @@ export default function AICoach() {
       })
     );
 
-    setInput('');
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageContent,
+          history: currentHistory,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to get AI coach response');
+      }
+
+      const assistantMessage: Message = {
+        id: generateId('msg'),
+        sender: 'assistant',
+        content: data.response,
+        timestamp: getFormattedTime(),
+      };
+
+      setSessions((prevSessions) =>
+        prevSessions.map((session) => {
+          if (session.id === targetSessionId || session.sessionId === targetSessionId) {
+            return {
+              ...session,
+              messages: [...session.messages, assistantMessage],
+            };
+          }
+          return session;
+        })
+      );
+
+      // Save chat message, response, sessionId, and title to database
+      fetch('/api/chats/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.id,
+          sessionId: targetSessionId,
+          title: sessionTitle,
+          message: messageContent,
+          response: data.response,
+        }),
+      }).catch((err) => console.warn('Could not save chat message:', err));
+
+    } catch (error: any) {
+      console.error('Error in chat:', error);
+      const errorMessage: Message = {
+        id: generateId('msg'),
+        sender: 'assistant',
+        content: `⚠️ ${error.message || 'Something went wrong. Please try again.'}`,
+        timestamp: getFormattedTime(),
+      };
+
+      setSessions((prevSessions) =>
+        prevSessions.map((session) => {
+          if (session.id === targetSessionId || session.sessionId === targetSessionId) {
+            return {
+              ...session,
+              messages: [...session.messages, errorMessage],
+            };
+          }
+          return session;
+        })
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -169,12 +289,13 @@ export default function AICoach() {
           </div>
 
           {sessions.map((session) => {
-            const isActive = session.id === activeSessionId;
+            const isActive = session.id === activeSessionId || session.sessionId === activeSessionId;
             return (
               <div
                 key={session.id}
                 onClick={() => {
-                  setActiveSessionId(session.id);
+                  setActiveSessionId(session.sessionId || session.id);
+                  setInput('');
                 }}
                 className={`group relative flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-200 ${isActive
                   ? 'bg-blue-600/20 text-white border border-blue-500/40 font-medium'
@@ -209,7 +330,7 @@ export default function AICoach() {
       <div className="flex-1 flex flex-col h-full bg-white relative">
         {/* Message Container */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-          {activeSession.messages.length === 0 ? (
+          {(!activeSession.messages || activeSession.messages.length === 0) ? (
             /* EMPTY STATE */
             <div className="max-w-2xl mx-auto my-auto text-center py-12 px-4 animate-fadeIn">
               <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6 shadow-inner border border-blue-100">

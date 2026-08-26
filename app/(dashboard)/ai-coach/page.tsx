@@ -1,8 +1,5 @@
-'use client';
+import AICoach from '../components/AICoach';
 
-import { redirect } from 'next/navigation';
-
-export default function RedirectToDashboard() {
-  redirect('/dashboard');
-  return null;
+export default function AICoachPage() {
+  return <AICoach />;
 }
