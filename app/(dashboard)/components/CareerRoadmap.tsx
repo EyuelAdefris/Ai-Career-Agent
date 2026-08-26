@@ -12,7 +12,6 @@ interface RoadmapPhase {
   activities: string[];
   skills: string[];
   milestones: string[];
-  salary: string;
 }
 
 interface CareerRoadmapFormData {
@@ -22,7 +21,6 @@ interface CareerRoadmapFormData {
   industry: string;
   skillsToLearn: string[];
   workMode: string;
-  salaryRange: string;
 }
 
 interface FormErrors {
@@ -120,7 +118,6 @@ export default function CareerRoadmap() {
     industry: '',
     skillsToLearn: [],
     workMode: 'Hybrid',
-    salaryRange: '',
   });
 
   const [errors, setErrors] = useState<FormErrors>({});
@@ -133,6 +130,30 @@ export default function CareerRoadmap() {
   const [roadmap, setRoadmap] = useState<RoadmapPhase[] | null>(null);
   const [visiblePhases, setVisiblePhases] = useState<number[]>([]);
   const [copied, setCopied] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // Custom inputs state
+  const [customIndustry, setCustomIndustry] = useState('');
+  const [isCustomIndustry, setIsCustomIndustry] = useState(false);
+  const [customTimeline, setCustomTimeline] = useState('');
+  const [isCustomTimeline, setIsCustomTimeline] = useState(false);
+  const [savedIndustries, setSavedIndustries] = useState<string[]>([]);
+  
+  // Saved plans view state
+  const [viewMode, setViewMode] = useState<'generate' | 'saved'>('generate');
+  const [savedRoadmaps, setSavedRoadmaps] = useState<any[]>([]);
+  const [isLoadingSaved, setIsLoadingSaved] = useState(false);
+
+  useEffect(() => {
+    const local = localStorage.getItem('custom_roadmap_industries');
+    if (local) {
+      try {
+        setSavedIndustries(JSON.parse(local));
+      } catch (e) {}
+    }
+  }, []);
 
   // Staggered phase reveal after generation
   useEffect(() => {
@@ -188,11 +209,16 @@ export default function CareerRoadmap() {
       industry: '',
       skillsToLearn: [],
       workMode: 'Hybrid',
-      salaryRange: '',
     });
+    setCustomIndustry('');
+    setIsCustomIndustry(false);
+    setCustomTimeline('');
+    setIsCustomTimeline(false);
     setErrors({});
     setRoadmap(null);
     setVisiblePhases([]);
+    setApiError(null);
+    setSaveSuccess(false);
   };
 
   // ── Validation ─────────────────────────────────────────────────────────────
@@ -212,134 +238,87 @@ export default function CareerRoadmap() {
       return;
     }
 
+    if (isCustomIndustry && formData.industry) {
+      const newIndustries = Array.from(new Set([...savedIndustries, formData.industry]));
+      setSavedIndustries(newIndustries);
+      localStorage.setItem('custom_roadmap_industries', JSON.stringify(newIndustries));
+    }
+
     setIsGenerating(true);
     setLoadingStep(0);
     setRoadmap(null);
+    setApiError(null);
 
-    for (let i = 0; i < 4; i++) {
-      setLoadingStep(i);
-      await new Promise(r => setTimeout(r, 1000));
+    // Simulate loading steps visually
+    const loadingInterval = setInterval(() => {
+      setLoadingStep(prev => (prev < 3 ? prev + 1 : 3));
+    }, 1200);
+
+    try {
+      const response = await fetch('/api/generate-roadmap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate career roadmap');
+      }
+
+      if (Array.isArray(data) && data.length > 0) {
+        setRoadmap(data);
+        setExpandedPhases(Object.fromEntries(data.map((_, i) => [i, i === 0])));
+      } else {
+        throw new Error('No roadmap phases were generated. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('Error generating roadmap:', error);
+      setApiError(error.message || 'Something went wrong while generating your roadmap.');
+    } finally {
+      clearInterval(loadingInterval);
+      setLoadingStep(4);
+      setTimeout(() => setIsGenerating(false), 500);
     }
+  };
 
-    const numPhases =
-      formData.timeline === '1 year' ? 3
-        : formData.timeline === '2 years' ? 4
-          : formData.timeline === '3 years' ? 4
-            : 4; // 5 years
+  const handleSaveRoadmap = async () => {
+    if (!roadmap) return;
+    setIsSaving(true);
+    setApiError(null);
+    setSaveSuccess(false);
 
-    const phaseDuration =
-      formData.timeline === '1 year' ? '4 months'
-        : formData.timeline === '2 years' ? '6 months'
-          : formData.timeline === '3 years' ? '9 months'
-            : '15 months';
+    try {
+      const response = await fetch('/api/roadmaps/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          roadmapData: roadmap,
+        }),
+      });
 
-    const skillGap = formData.skillsToLearn.length > 0
-      ? formData.skillsToLearn
-      : ['System Design', 'Cloud Infrastructure', 'Team Leadership', 'Technical Communication'];
+      const data = await response.json();
 
-    // Industry-keyed salary tiers: [phase1, phase2, phase3, phase4]
-    const salaryTiers: Record<string, [string, string, string, string]> = {
-      Technology:           ['$65k–$80k',  '$90k–$110k',  '$120k–$145k', '$150k–$185k'],
-      Finance:              ['$70k–$85k',  '$95k–$115k',  '$125k–$150k', '$155k–$190k'],
-      Marketing:            ['$50k–$65k',  '$70k–$90k',   '$95k–$120k',  '$125k–$160k'],
-      Healthcare:           ['$60k–$75k',  '$80k–$100k',  '$110k–$135k', '$140k–$170k'],
-      Education:            ['$45k–$60k',  '$65k–$80k',   '$85k–$105k',  '$110k–$140k'],
-      Design:               ['$55k–$70k',  '$75k–$95k',   '$100k–$125k', '$130k–$160k'],
-      'Data Science':       ['$75k–$90k',  '$100k–$120k', '$130k–$155k', '$160k–$200k'],
-      DevOps:               ['$70k–$90k',  '$100k–$120k', '$130k–$155k', '$160k–$195k'],
-      'Product Management': ['$70k–$85k',  '$95k–$115k',  '$125k–$150k', '$155k–$185k'],
-      Sales:                ['$55k–$70k',  '$75k–$95k',   '$100k–$130k', '$135k–$170k'],
-    };
-    const tiers = salaryTiers[formData.industry] ?? ['$60k–$80k', '$85k–$105k', '$110k–$135k', '$140k–$175k'];
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save roadmap');
+      }
 
-    const generated: RoadmapPhase[] = [
-      {
-        phase: 1,
-        title: 'Foundation & Skills Audit',
-        duration: phaseDuration,
-        color: 'blue',
-        activities: [
-          `Research top ${formData.targetTitle} job descriptions and extract required skills`,
-          'Enroll in 2–3 targeted online courses aligned with the role and industry',
-          'Set up a professional portfolio and update your LinkedIn to target the role',
-          'Complete an informational interview with 2 professionals currently in the role',
-        ],
-        skills: skillGap.slice(0, 2).length > 0 ? skillGap.slice(0, 2) : ['Core Technical Skills', 'Industry Knowledge'],
-        milestones: [
-          `LinkedIn profile updated to target ${formData.targetTitle}`,
-          'Portfolio with 2+ relevant projects live',
-          'Completed first certification or course',
-        ],
-        salary: tiers[0],
-      },
-      {
-        phase: 2,
-        title: 'Deep Skill Development',
-        duration: phaseDuration,
-        color: 'purple',
-        activities: [
-          `Build 2 portfolio projects showcasing ${formData.targetTitle} competencies`,
-          `Join professional communities in the ${formData.industry} space and attend 1 industry event`,
-          'Contribute to open-source or cross-team projects to build a track record',
-          'Begin applying for stretch roles to benchmark your interview readiness',
-        ],
-        skills: skillGap.slice(2, 4).length > 0 ? skillGap.slice(2, 4) : ['Advanced Problem Solving', 'Collaboration'],
-        milestones: [
-          'Passed 2 technical interviews (even if rejected — practice counts)',
-          'Built and shipped a full-stack or domain-specific project',
-          'Received at least 1 peer recommendation on LinkedIn',
-        ],
-        salary: tiers[1],
-      },
-      ...(numPhases >= 3 ? [{
-        phase: 3,
-        title: 'Professional Branding & Network',
-        duration: phaseDuration,
-        color: 'teal',
-        activities: [
-          `Publish 4+ thought-leadership articles or posts in ${formData.industry}`,
-          `Start actively applying for ${formData.targetTitle} positions${formData.targetCompany ? ` at ${formData.targetCompany} and similar companies` : ''}`,
-          'Secure a mentor who currently holds your target role',
-          `Prioritize ${formData.workMode.toLowerCase()} opportunities matching your work mode preference`,
-        ],
-        skills: ['Personal Branding', 'Stakeholder Communication', 'Negotiation Basics'],
-        milestones: [
-          `5+ active hiring manager connections for ${formData.targetTitle} roles`,
-          'Published professional portfolio with measurable outcomes',
-          'Scheduled final-round interviews at 2+ companies',
-        ],
-        salary: tiers[2],
-      } as RoadmapPhase] : []),
-      ...(numPhases >= 4 ? [{
-        phase: 4,
-        title: `Land Your ${formData.targetTitle}`,
-        duration: phaseDuration,
-        color: 'indigo',
-        activities: [
-          'Negotiate offer: salary, equity, remote policy, and growth path',
-          'Complete onboarding plan for your first 90 days',
-          'Set 6-month performance objectives with your manager',
-          'Build new team relationships and identify quick wins',
-        ],
-        skills: ['Executive Presence', 'Leadership & Influence', 'Strategic Thinking'],
-        milestones: [
-          `Signed offer letter for ${formData.targetTitle}${formData.targetCompany ? ` at ${formData.targetCompany}` : ''}`,
-          `Achieved ${formData.salaryRange || tiers[3]} compensation package`,
-          'Completed successful 30-day onboarding',
-        ],
-        salary: formData.salaryRange || tiers[3],
-      } as RoadmapPhase] : []),
-    ];
-
-    setRoadmap(generated);
-    setExpandedPhases(Object.fromEntries(generated.map((_, i) => [i, i === 0])));
-    setIsGenerating(false);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error: any) {
+      console.error('Error saving roadmap:', error);
+      setApiError(error.message || 'Something went wrong while saving your roadmap.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCopy = () => {
     if (!roadmap) return;
     const text = roadmap.map(p =>
-      `PHASE ${p.phase}: ${p.title} (${p.duration})\nActivities:\n${p.activities.map(a => `  • ${a}`).join('\n')}\nSkills: ${p.skills.join(', ')}\nMilestones:\n${p.milestones.map(m => `  ✓ ${m}`).join('\n')}\nSalary: ${p.salary}\n`
+      `PHASE ${p.phase}: ${p.title} (${p.duration})\nActivities:\n${p.activities.map(a => `  • ${a}`).join('\n')}\nSkills: ${p.skills.join(', ')}\nMilestones:\n${p.milestones.map(m => `  ✓ ${m}`).join('\n')}\n`
     ).join('\n───────────────────────────────\n\n');
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -361,17 +340,43 @@ export default function CareerRoadmap() {
 
   return (
     <div className="space-y-6">
-      {/* Intro */}
-      <div className="mb-4">
-        <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Career Roadmap Generator</h2>
-        <p className="text-gray-600 text-sm mt-1">
-          Select your target role and let AI build a phase-by-phase action plan with skill targets, milestones, and salary projections.
-        </p>
+      {/* Header & Tabs */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Career Roadmap</h2>
+          <p className="text-gray-600 text-sm mt-1">
+            Build a phase-by-phase action plan with skill targets and milestones.
+          </p>
+        </div>
+        <div className="flex p-1 bg-slate-100 rounded-lg shrink-0">
+          <button
+            onClick={() => setViewMode('generate')}
+            className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${viewMode === 'generate' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            Generate New
+          </button>
+          <button
+            onClick={() => {
+              setViewMode('saved');
+              setIsLoadingSaved(true);
+              fetch('/api/roadmaps/get')
+                .then(res => res.json())
+                .then(data => {
+                  if (data.roadmaps) setSavedRoadmaps(data.roadmaps);
+                  setIsLoadingSaved(false);
+                })
+                .catch(() => setIsLoadingSaved(false));
+            }}
+            className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${viewMode === 'saved' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            Saved Plans
+          </button>
+        </div>
       </div>
 
-      {/* Two-panel workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* LEFT: Form Panel */}
+      {viewMode === 'generate' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* LEFT: Form Panel */}
         <section className="lg:col-span-5 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-1">
 
           {/* ── Section 1: Target Job ── */}
@@ -424,15 +429,38 @@ export default function CareerRoadmap() {
                   <label htmlFor="industry" className={labelCls}>
                     Industry <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    id="industry"
-                    value={formData.industry}
-                    onChange={e => setField('industry', e.target.value)}
-                    className={`${selectCls} ${errors.industry ? 'border-red-400' : ''}`}
-                  >
-                    <option value="">Select industry...</option>
-                    {INDUSTRY_OPTIONS.map(ind => <option key={ind} value={ind}>{ind}</option>)}
-                  </select>
+                  {!isCustomIndustry ? (
+                    <select
+                      id="industry"
+                      value={formData.industry}
+                      onChange={e => {
+                        if (e.target.value === 'custom') {
+                          setIsCustomIndustry(true);
+                          setField('industry', '');
+                        } else {
+                          setField('industry', e.target.value);
+                        }
+                      }}
+                      className={`${selectCls} ${errors.industry ? 'border-red-400' : ''}`}
+                    >
+                      <option value="">Select industry...</option>
+                      {INDUSTRY_OPTIONS.map(ind => <option key={ind} value={ind}>{ind}</option>)}
+                      {savedIndustries.map(ind => <option key={`saved-${ind}`} value={ind}>{ind}</option>)}
+                      <option value="custom">Custom / Add New Industry...</option>
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Type custom industry..."
+                        value={formData.industry}
+                        onChange={e => setField('industry', e.target.value)}
+                        className={`${inputCls} ${errors.industry ? 'border-red-400 focus:ring-red-400' : ''}`}
+                        autoFocus
+                      />
+                      <button type="button" onClick={() => { setIsCustomIndustry(false); setField('industry', ''); }} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                    </div>
+                  )}
                   {errors.industry && <p className={errorCls}>{errors.industry}</p>}
                 </div>
 
@@ -441,15 +469,37 @@ export default function CareerRoadmap() {
                   <label htmlFor="timeline" className={labelCls}>
                     Timeline <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    id="timeline"
-                    value={formData.timeline}
-                    onChange={e => setField('timeline', e.target.value)}
-                    className={`${selectCls} ${errors.timeline ? 'border-red-400' : ''}`}
-                  >
-                    <option value="">Select timeline...</option>
-                    {TIMELINE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  {!isCustomTimeline ? (
+                    <select
+                      id="timeline"
+                      value={formData.timeline}
+                      onChange={e => {
+                        if (e.target.value === 'custom') {
+                          setIsCustomTimeline(true);
+                          setField('timeline', '');
+                        } else {
+                          setField('timeline', e.target.value);
+                        }
+                      }}
+                      className={`${selectCls} ${errors.timeline ? 'border-red-400' : ''}`}
+                    >
+                      <option value="">Select timeline...</option>
+                      {TIMELINE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      <option value="custom">Custom Timeline...</option>
+                    </select>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. 18 Months, 4 Weeks"
+                        value={formData.timeline}
+                        onChange={e => setField('timeline', e.target.value)}
+                        className={`${inputCls} ${errors.timeline ? 'border-red-400 focus:ring-red-400' : ''}`}
+                        autoFocus
+                      />
+                      <button type="button" onClick={() => { setIsCustomTimeline(false); setField('timeline', ''); }} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                    </div>
+                  )}
                   {errors.timeline && <p className={errorCls}>{errors.timeline}</p>}
                 </div>
               </div>
@@ -507,26 +557,17 @@ export default function CareerRoadmap() {
                   </div>
                 </div>
 
-                {/* Desired Salary Range */}
-                <div>
-                  <label htmlFor="salaryRange" className={labelCls}>
-                    Desired Salary Range <span className="text-gray-400 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    id="salaryRange"
-                    type="text"
-                    placeholder="e.g. $120k–$150k / year"
-                    value={formData.salaryRange}
-                    onChange={e => setField('salaryRange', e.target.value)}
-                    className={inputCls}
-                  />
-                </div>
               </div>
             )}
           </div>
 
           {/* Action Buttons */}
           <div className="pt-4 space-y-3">
+            {apiError && (
+              <div className="p-3 mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg">
+                ⚠️ {apiError}
+              </div>
+            )}
             <button
               type="button"
               id="generate-roadmap-btn"
@@ -721,6 +762,13 @@ export default function CareerRoadmap() {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    onClick={handleSaveRoadmap}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 border border-transparent rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {isSaving ? 'Saving...' : saveSuccess ? '✓ Saved!' : '💾 Save Plan'}
+                  </button>
+                  <button
                     id="copy-roadmap-btn"
                     onClick={handleCopy}
                     className="px-4 py-2 text-sm font-semibold text-blue-600 hover:text-blue-700 border border-blue-200 hover:border-blue-400 rounded-lg transition-all bg-blue-50"
@@ -764,11 +812,6 @@ export default function CareerRoadmap() {
                                 </span>
                               </div>
                               <h3 className="font-bold text-gray-900 text-base mt-0.5 truncate">{phase.title}</h3>
-                            </div>
-
-                            <div className="text-right shrink-0 hidden sm:block">
-                              <p className="text-xs text-gray-500">Est. Salary</p>
-                              <p className={`text-sm font-bold ${colorSet.text}`}>{phase.salary}</p>
                             </div>
 
                             <span className={`${colorSet.text} text-sm ml-2 shrink-0`}>
@@ -828,6 +871,44 @@ export default function CareerRoadmap() {
           )}
         </section>
       </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 min-h-[400px]">
+          <h3 className="text-xl font-bold text-gray-900 mb-6">Your Saved Roadmaps</h3>
+          {isLoadingSaved ? (
+            <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
+          ) : savedRoadmaps.length === 0 ? (
+            <p className="text-gray-500 text-center py-10">No saved roadmaps found.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {savedRoadmaps.map((plan: any) => (
+                <button
+                  key={plan.id}
+                  onClick={() => {
+                    setFormData({
+                      targetTitle: plan.targetTitle,
+                      targetCompany: plan.targetCompany || '',
+                      timeline: plan.timeline,
+                      industry: plan.industry,
+                      skillsToLearn: plan.skillsToLearn || [],
+                      workMode: plan.workMode || 'Hybrid',
+                    });
+                    setRoadmap(plan.roadmapData);
+                    setExpandedPhases(Object.fromEntries((plan.roadmapData || []).map((_: any, i: number) => [i, i === 0])));
+                    setViewMode('generate');
+                  }}
+                  className="text-left p-5 border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all bg-slate-50"
+                >
+                  <h4 className="font-bold text-gray-900 mb-1">{plan.targetTitle}</h4>
+                  <p className="text-xs text-gray-500 mb-3">{plan.industry} · {plan.timeline}</p>
+                  <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
+                    {plan.roadmapData?.length || 0} Phases
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
