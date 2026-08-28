@@ -41,12 +41,33 @@ body {
   }
 }
 
-/* Clerk Custom Styling */
-.cl-card {
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
-    0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  border-radius: 1rem;
+/* ── Clerk Modal: one unified card, no separation ── */
+
+/* The outer wrapper gets the single shadow + rounded corners */
+.cl-cardBox {
+  gap: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-radius: 1rem !important;
+  overflow: hidden !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15),
+    0 10px 20px -5px rgba(0, 0, 0, 0.08) !important;
   animation: fadeInUp 300ms ease-in-out;
+}
+
+/* Main card: no individual shadow, no bottom radius — flush into footer */
+.cl-card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid #e5e7eb !important;
+}
+
+/* Footer: no top radius, no shadow — seamlessly connects to card above */
+.cl-footer {
+  margin-top: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: #f9fafb !important;
 }
 
 .cl-button-primary {

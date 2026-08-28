@@ -17,6 +17,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "AI Career Coach",
   description: "Your AI-powered career guidance platform",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/favicon.png", type: "image/png" },
+    ],
+    shortcut: "/icon.png",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -31,7 +39,7 @@ export default function RootLayout({
 
           // Card/Container
           card: "shadow-2xl rounded-2xl border border-gray-200",
-          cardBox: "space-y-6",
+          cardBox: "",
 
           // Form Elements
           formFieldInput:
@@ -64,7 +72,8 @@ export default function RootLayout({
           heading: "text-3xl font-bold text-gray-900",
           subtitle: "text-gray-600",
 
-          // Footer
+          // Footer — remove the gap/separation between card and footer panel
+          footer: "border-t border-gray-200 rounded-b-2xl bg-white pt-4",
           footerActionLink: "text-blue-600 hover:text-blue-700 font-medium",
 
           // Error states

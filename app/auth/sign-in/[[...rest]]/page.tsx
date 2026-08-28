@@ -24,6 +24,7 @@ function SignInContent() {
         }}
         signUpUrl="/auth/sign-up"
         fallbackRedirectUrl="/dashboard"
+        forceRedirectUrl="/dashboard"
       />
     </div>
   );
